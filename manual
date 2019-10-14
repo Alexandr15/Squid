@@ -1,0 +1,114 @@
+# /etc/squid/squid.conf: файл конфигурации прокси-сервера Squid
+
+http_port 192.168.0.1:3128             - где находится прокси
+
+hierarchy_stoplist cgi-bin ?           |
+acl QUERY urlpath_regex cgi-bin \?     |
+no_cache deny QUERY                    |-> запрет кэширования файлов находящихся в каталоге cgi-bin
+
+cache_mem 64 MB                        - объем памяти под кэширование (например 1/3 ОЗУ)
+maximum_object_size 10240 KB           - максимальный размер кэшируемого объекта
+
+cache_dir ufs /var/spool/squid 10240 16 256   - местонахождение и структура кеша squid
+cache_access_log /var/log/squid/access.log    - местонахождение файла конфигурации
+cache_mgr root@tdkare.ru		      - e-mail администратора
+
+cache_store_log none               - запрет создания файла регистрирующий удаление и перемещение объектов в кеш
+# cache_store_log /var/log/squid/store.log
+
+ssl_unclean_shutdown on		   - включение поддержки работы squid с браузерами некорректно поддерживающими ssl
+log_fqdn on			   - разрешение записи в файлы регистрации доменных имен вместо ip (снижает производительность)
+emulate_httpd_log on		   - разрешение создания файлов регистрации squid в формате apache
+
+cache_effective_user proxy
+cache_effective_group proxy
+
+# настройка редиректора для фильтрации внешней программой
+redirector_bypass on		   - если ни один из экзепляров squidGuard не отвечает то работать напрямую
+#redirector_bypass off		   - работать только через squidGuard
+##url_rewrite_program /usr/bin/squidGuard -c /etc/squid/squidGuard.conf # разрешение использования squidGuard
+redirect_program /usr/bin/squidGuard -c	/etc/squid/squidGuard.conf	- разрешение использования squidGuard
+redirect_children 5		   - количество одновременно работающих пользователей с редиректором
+
+auth_param basic children 5
+auth_param basic realm Squid proxy-caching web server
+auth_param basic credentialsttl 2 hours
+auth_param basic casesensitive off
+refresh_pattern ^ftp:		1440	20%	10080
+refresh_pattern ^gopher:	1440	0%	1440
+refresh_pattern .		0	20%	4320
+
+# блок определения имена списков
+acl all src 0.0.0.0/0.0.0.0		# определение метода элемента acl для метода PURGE (очистка кеша)
+#ident_lookup on
+#acl allowed_users myuser root
+#acl aclname ident myuser root
+#acl aclname proxy_auth myuser root
+acl manager proto cache_object
+acl localhost src 127.0.0.1/255.255.255.255
+acl localnet src 192.168.0.0/255.255.255.0
+acl to_localhost dst 127.0.0.0/8
+acl SSL_ports port 443 563
+acl Safe_ports port 80 21 443 563 70 210 1025-65535 280 488 591 777 	# открытые порты, описание см. ниже
+acl CONNECT method CONNECT		# определение метода элемента acl для метода CONNECT
+acl our_networks src 192.168.0.0/24
+acl limited src 192.168.0.31/255.255.255.255
+acl full src 192.168.0.1/255.255.255.255
+acl god src 192.168.0.2/255.255.255.255
+acl poor_urls url_regex -i "/etc/squid/poor/urls"
+#acl poor_path urlpath_regex -i "/etc/squid/poor/path"
+acl good_urls url_regex -i "/etc/squid/good/urls"
+acl good_path urlpath_regex -i "/etc/squid/good/path"
+acl squidGuard src 192.168.0.31/255.255.255.255
+
+#redirector_access allow squidGuard
+
+# блок настройки правил доступа
+http_access allow manager localhost      - разрешение доступа группе manager по протоколу с localhost
+# правило 2: настраиваем порты и метод подключения
+# правило 3: группа good
+
+# правило 4: группа full
+
+http_access deny !Safe_ports          - запрет обращения к небезопасным портам
+http_access deny CONNECT !SSL_ports   - запрет обращения к портам, неиспользуемым SSL, с помощью метода CONNECT
+#http_access deny CONNECT # запрет метода CONNECT
+http_access deny manager
+#http_access deny to_localhost
+# http_access allow localhost         - разрешение доступа к squid с локальной машины
+# http_access allow localnet          - разрешение доступа к squid из всей локальной сети
+http_access allow god all             - группе god разрешено всё
+http_access allow full all !poor_urls  - группе full разрешаем выход везде кроме плохих сайтов
+http_access allow limited good_urls !poor_urls - группе limited запрещаем выход везде кроме разрешенных сайтов
+http_access deny all                 - запрет доступа для всех хостов
+
+http_reply_access allow all
+icp_access allow all
+visible_hostname gw		      - имя шлюза для отчетов
+buffered_logs on		      - поддержка ускорения записи файлов регистрации
+
+  refresh_pattern [-i] regex min percent max [options]          - установка правил выемки объекта из кеша в связи с его устареванием в кеше
+  где
+  regex       регистрозависимая маска объекта в виде регулярного выражения
+  [-i]        указание игнорирования регистра для regex
+  min         минимальное время(в минутах) для объектов, которым оно не задано явно, в течение которого они(объекты) считаются "свежими".
+        Рекомендуемое значение 0. Увеличение этого значения может стать причиной ошибок - выдачи объекта из кэша, в то время как клиенту он нужен
+        актуальный в это конкретное время.
+  percent     процент от возраста объекта(время прошедшее с момента последнего изменения) в течении котрого объект считается "свежим".
+  max         максимальное время(в минутах) для объектов, которым оно не задано явно, в течение которого они(объекты) считаются "свежими".
+  [options]   дополнительные параметры правила
+     override-expire     использовать установленное минимальное время "свежести" объектов, если сервер отправляет заголовок Expires, т.е. что объект устарел. 
+        Использование этой опции НАРУШАЕТ стандарт HTTP. Включая эту опцию, вы принимаете на себя ответственность за возможные проблемы.
+     override-lastmod    использовать установленное минимальное время "свежести" объектов, которые были изменены недавно.
+     reload-into-ims     изменяет клиентские запросы 'no-cache' или 'reload' на 'If-Modified-Since'.
+        Использование этой опции НАРУШАЕТ стандарт HTTP. Включая эту опцию, вы принимаете на себя ответственность за возможные проблемы.
+     ignore-reload       игнорирование клиентских заголовков 'no-cache' или 'reload'.
+        Использование этой опции НАРУШАЕТ стандарт HTTP. Включая эту опцию, вы принимаете на себя ответственность за возможные проблемы.
+     ignore-no-cache     игнорировать заголовки 'Pragma: no-cache' и 'Cache-control: no-cache' принятые от сервера.
+        HTTP RFC никогда не разрешало использовать Pragma заголовки серверами. Это разрешается только клиентам, но сервера все равно отсылают эти заголовки.
+     ignore-private      игнорировать заголовки 'Cache-control: private' принятые от сервера.
+        Использование этой опции НАРУШАЕТ стандарт HTTP. Включая эту опцию, вы принимаете на себя ответственность за возможные проблемы.
+     ignore-auth         кэшировать ответы на запросы авторизации, если внешний(оригинальный) сервер отправил заголовок 'Cache-control: public' в ответе.
+        Использование этой опции НАРУШАЕТ стандарт HTTP. Включая эту опцию, вы принимаете на себя ответственность за возможные проблемы.
+  Правила refresh_pattern проходятся по порядку сверху вниз. Первое совпадение и будет использоватся.
+  Если совпадений не найдено, то будут использоватся настройки по умолчанию.
